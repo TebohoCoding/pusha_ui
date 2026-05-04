@@ -1,5 +1,6 @@
-(function () {
-  const data = window.PUSHA_MOCK_DATA;
+import "./styles.css";
+import data from "./data/mockData.js";
+
   const routeIds = ["dashboard", "leads", "clients", "pipeline", "tasks", "settings"];
   const state = {
     route: routeIds.includes(location.hash.slice(1)) ? location.hash.slice(1) : "login",
@@ -521,4 +522,3 @@
 
   render();
   if (state.route === "dashboard") requestAnimationFrame(animateCounters);
-})();

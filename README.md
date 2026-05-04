@@ -1,12 +1,15 @@
 # Pusha CRM
 
-Pusha CRM is a lightweight browser-based CRM demo with a premium SaaS dashboard feel. It uses local dummy data only and does not require a backend or build step.
+Pusha CRM is now a lightweight Vite app with a premium SaaS dashboard feel. It still uses local dummy data for now, but it is set up for a production-style frontend workflow and ready for Supabase environment variables next.
 
 ## Project Structure
 
 ```text
 .
++-- .env.example
++-- .gitignore
 +-- index.html
++-- package.json
 +-- README.md
 +-- src
     +-- data
@@ -17,13 +20,35 @@ Pusha CRM is a lightweight browser-based CRM demo with a premium SaaS dashboard 
 
 ## Run Locally
 
-Open `index.html` directly in a browser.
-
-If Node.js is installed later, you can also serve the folder with any static server, for example:
+Install dependencies and start the Vite dev server:
 
 ```bash
-npx serve .
+npm install
+npm run dev
 ```
+
+Create a production build with:
+
+```bash
+npm run build
+```
+
+Preview the production build locally with:
+
+```bash
+npm run preview
+```
+
+## Vercel And Environment Variables
+
+For the upcoming Supabase auth work, add these variables in Vercel Project Settings and in a local `.env` file:
+
+```bash
+VITE_SUPABASE_URL=...
+VITE_SUPABASE_ANON_KEY=...
+```
+
+Vite only exposes browser environment variables that start with `VITE_`.
 
 ## What Is Included
 
@@ -38,13 +63,13 @@ npx serve .
 
 ## Replacing Dummy Data
 
-All mock data lives in `src/data/mockData.js` under `window.PUSHA_MOCK_DATA`.
+All mock data lives in `src/data/mockData.js` and is imported into `src/main.js`.
 
 To connect a real API later:
 
-1. Replace `window.PUSHA_MOCK_DATA` with API responses.
+1. Replace the mock data import with API responses or service calls.
 2. Keep the same data shapes where possible to avoid changing UI components.
 3. Move state updates in `src/main.js` behind small service functions such as `getLeads()`, `getClients()`, `getDeals()`, and `getTasks()`.
-4. Add authentication around the login action once a backend exists.
+4. Add authentication around the login action with Supabase Auth.
 
-The UI is intentionally framework-free for the first demo so it stays fast, easy to inspect, and simple to migrate into a fuller frontend stack later.
+The UI stays intentionally framework-free, but Vite now provides a proper build pipeline for Vercel deployments and environment-based configuration.

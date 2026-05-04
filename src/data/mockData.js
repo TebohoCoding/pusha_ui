@@ -1,4 +1,4 @@
-window.PUSHA_MOCK_DATA = {
+const mockData = {
   user: {
     name: "Nandi Mokoena",
     role: "Growth Lead",
@@ -150,3 +150,5 @@ window.PUSHA_MOCK_DATA = {
     { id: 5, title: "Book Ocean & Oak discovery call", owner: "Mia", due: "Apr 23", priority: "Medium", done: false },
   ],
 };
+
+export default mockData;
