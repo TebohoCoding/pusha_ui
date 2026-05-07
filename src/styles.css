@@ -606,6 +606,60 @@ textarea:focus {
   color: var(--warning);
 }
 
+.dashboard-state-card,
+.dashboard-loading-card {
+  display: grid;
+  gap: 18px;
+}
+
+.dashboard-state-card {
+  padding: 24px;
+}
+
+.dashboard-state-card h2 {
+  margin: 0;
+}
+
+.dashboard-state-card p:last-child {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.dashboard-loading-view .card {
+  overflow: hidden;
+}
+
+.dashboard-loading-copy,
+.dashboard-loading-chart {
+  border-radius: 999px;
+  background: linear-gradient(90deg, #f6f2e7 20%, #fffdf8 50%, #f6f2e7 80%);
+  background-size: 200% 100%;
+  animation: shimmer 1.15s linear infinite;
+}
+
+.dashboard-loading-copy {
+  height: 14px;
+}
+
+.dashboard-loading-copy.short {
+  width: 36%;
+}
+
+.dashboard-loading-copy.medium {
+  width: 58%;
+}
+
+.dashboard-loading-copy.tall {
+  width: 48%;
+  height: 38px;
+}
+
+.dashboard-loading-chart {
+  min-height: 260px;
+  border-radius: var(--radius);
+}
+
 .chart-card,
 .activity-card,
 .tasks-card,
@@ -924,6 +978,10 @@ textarea:focus {
 
 .bars span + span {
   background: var(--gold);
+}
+
+.chart-helper {
+  margin: 18px 0 0;
 }
 
 .activity-row {

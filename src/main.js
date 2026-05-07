@@ -105,6 +105,8 @@ const state = {
   route: allRouteIds.includes(initialHashRoute) ? initialHashRoute : "login",
   sidebarOpen: false,
   loading: false,
+  dashboardLoading: false,
+  dashboardError: "",
   globalSearch: "",
   selectedLead: null,
   selectedClient: null,
@@ -237,6 +239,7 @@ const leadStatusPresets = [
 const taskTypePresets = ["Call", "Email", "Meeting", "Follow Up", "Internal"];
 const taskPriorityPresets = ["Low", "Medium", "High", "Urgent"];
 const taskStatusPresets = ["Pending", "In Progress", "Completed", "Cancelled"];
+const dashboardWeekLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const app = document.querySelector("#app");
 
 const currency = (value) =>
@@ -246,6 +249,9 @@ const currency = (value) =>
     maximumFractionDigits: 0,
   }).format(value);
 const number = (value) => new Intl.NumberFormat("en-US").format(value);
+const relativeTimeFormatter = new Intl.RelativeTimeFormat("en", {
+  numeric: "auto",
+});
 const html = (strings, ...values) =>
   strings.reduce(
     (result, string, index) => result + string + (values[index] ?? ""),
@@ -299,6 +305,49 @@ const formatDateTime = (value) => {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+};
+const startOfDay = (value) => {
+  const date = value instanceof Date ? new Date(value) : parseDateValue(value);
+  if (!date) return null;
+
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
+const addDays = (value, days) => {
+  const date = new Date(value);
+  date.setDate(date.getDate() + days);
+  return date;
+};
+const getStartOfWeek = (value = new Date()) => {
+  const date = startOfDay(value);
+  const weekday = date?.getDay?.() ?? 0;
+  const offset = weekday === 0 ? -6 : 1 - weekday;
+  return addDays(date, offset);
+};
+const getRelativeTimeLabel = (value) => {
+  const date = parseDateValue(value);
+  if (!date) return "Recently";
+
+  const deltaInSeconds = Math.round((date.getTime() - Date.now()) / 1000);
+  const units = [
+    ["year", 31536000],
+    ["month", 2592000],
+    ["week", 604800],
+    ["day", 86400],
+    ["hour", 3600],
+    ["minute", 60],
+  ];
+
+  for (const [unit, seconds] of units) {
+    if (Math.abs(deltaInSeconds) >= seconds || unit === "minute") {
+      return relativeTimeFormatter.format(
+        Math.round(deltaInSeconds / seconds),
+        unit,
+      );
+    }
+  }
+
+  return "Just now";
 };
 const isValidHexColor = (value) =>
   /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test((value || "").trim());
@@ -458,6 +507,10 @@ function getContactInitials(contact) {
 
 function getContactStatusValue(contact) {
   return (contact.status || "").trim() || "New";
+}
+
+function getDashboardContactLabel(contact) {
+  return (contact.company || "").trim() || getContactName(contact);
 }
 
 function getLeadName(lead) {
@@ -815,11 +868,155 @@ function sortTasks(tasks, sortBy = state.taskSort) {
   });
 }
 
+function areDashboardSourcesLoaded() {
+  return (
+    state.contactsLoaded &&
+    state.leadsLoaded &&
+    state.dealsLoaded &&
+    state.tasksLoaded
+  );
+}
+
+function isDashboardTaskOpen(task) {
+  return getTaskStatusValue(task) !== "Completed";
+}
+
+function getDashboardMetrics() {
+  const today = startOfDay(new Date());
+  const totalLeads = state.leads.length;
+  const activeDeals = state.deals.filter((deal) => {
+    const stage = getDealStageValue(deal);
+    return stage !== "Won" && stage !== "Lost";
+  }).length;
+  const followUpsDue = state.tasks.filter((task) => {
+    if (!isDashboardTaskOpen(task)) return false;
+
+    const dueDate = startOfDay(task.due_date);
+    return dueDate ? dueDate.getTime() <= today.getTime() : false;
+  }).length;
+  const revenuePipeline = state.deals
+    .filter((deal) => getDealStageValue(deal) !== "Lost")
+    .reduce((total, deal) => total + getDealValueNumber(deal), 0);
+
+  return [
+    {
+      label: "Total Leads",
+      value: totalLeads,
+      change: "Workspace total",
+      tone: "",
+    },
+    {
+      label: "Active Deals",
+      value: activeDeals,
+      change: "Excludes won and lost",
+      tone: "",
+    },
+    {
+      label: "Follow-ups Due",
+      value: followUpsDue,
+      change: "Due today or overdue",
+      tone: followUpsDue ? "warn" : "",
+    },
+    {
+      label: "Revenue Pipeline",
+      value: revenuePipeline,
+      prefix: "currency",
+      change: "Active and won, excluding lost",
+      tone: "",
+    },
+  ];
+}
+
+function getDashboardChartData() {
+  const weekStart = getStartOfWeek();
+  const weekEnd = addDays(weekStart, 7);
+  const chart = dashboardWeekLabels.map((label, index) => ({
+    label,
+    leads: 0,
+    deals: 0,
+    date: addDays(weekStart, index),
+  }));
+
+  const countRecordForWeek = (record, key) => {
+    const createdAt = parseDateValue(record.created_at);
+    if (!createdAt || createdAt < weekStart || createdAt >= weekEnd) return;
+
+    const dayIndex = Math.round(
+      (startOfDay(createdAt).getTime() - weekStart.getTime()) / 86400000,
+    );
+
+    if (dayIndex >= 0 && dayIndex < chart.length) {
+      chart[dayIndex][key] += 1;
+    }
+  };
+
+  state.leads.forEach((lead) => countRecordForWeek(lead, "leads"));
+  state.deals.forEach((deal) => countRecordForWeek(deal, "deals"));
+
+  return chart;
+}
+
+function getDashboardActivityItems() {
+  const contacts = state.contacts.map((contact) => ({
+    id: `contact-${contact.id}`,
+    text: `Added ${getDashboardContactLabel(contact)} as a contact`,
+    timeValue: contact.created_at,
+  }));
+  const leads = state.leads.map((lead) => ({
+    id: `lead-${lead.id}`,
+    text: `Added ${getLeadName(lead)} as a lead`,
+    timeValue: lead.created_at,
+  }));
+  const deals = state.deals.map((deal) => ({
+    id: `deal-${deal.id}`,
+    text: `Created deal ${getDealName(deal)}`,
+    timeValue: deal.created_at,
+  }));
+  const createdTasks = state.tasks.map((task) => ({
+    id: `task-created-${task.id}`,
+    text: `Created task ${getTaskTitle(task)}`,
+    timeValue: task.created_at,
+  }));
+  const completedTasks = state.tasks
+    .filter((task) => isTaskCompleted(task))
+    .map((task) => ({
+      id: `task-completed-${task.id}`,
+      text: `Completed task ${getTaskTitle(task)}`,
+      timeValue: task.completed_at || task.updated_at || task.created_at,
+    }));
+
+  return [...contacts, ...leads, ...deals, ...createdTasks, ...completedTasks]
+    .filter((item) => parseDateValue(item.timeValue))
+    .sort(
+      (left, right) =>
+        parseDateValue(right.timeValue).getTime() -
+        parseDateValue(left.timeValue).getTime(),
+    )
+    .slice(0, 5)
+    .map((item) => ({
+      ...item,
+      time: getRelativeTimeLabel(item.timeValue),
+    }));
+}
+
+function getDashboardUpcomingTasks() {
+  return sortTasks(
+    state.tasks.filter((task) => isDashboardTaskOpen(task)),
+    "due-date",
+  ).slice(0, 5);
+}
+
+function resetDashboardState() {
+  state.dashboardLoading = false;
+  state.dashboardError = "";
+}
+
 function resetProfileState() {
   state.globalSearch = "";
   state.organizationId = "";
   state.currentProfile = null;
   state.currentProfilePromise = null;
+  resetDashboardState();
   resetOrganizationState();
 }
 
@@ -1640,16 +1837,35 @@ function renderPage() {
 }
 
 function renderDashboard() {
-  const maxLead = Math.max(...data.chart.map((item) => item.leads));
-  const maxDeal = Math.max(...data.chart.map((item) => item.deals));
-  const dashboardTasks = sortTasks(
-    state.tasks.filter((task) => !isTaskCompleted(task)),
-  ).slice(0, 4);
+  const isBlockingError = Boolean(
+    state.dashboardError && !areDashboardSourcesLoaded(),
+  );
+
+  if (isBlockingError) {
+    return renderDashboardStateCard({
+      eyebrow: "Dashboard sync",
+      title: "We could not load your dashboard.",
+      body: state.dashboardError,
+      actionLabel: "Try again",
+    });
+  }
+
+  if (!areDashboardSourcesLoaded()) {
+    return renderDashboardLoadingView();
+  }
+
+  const metrics = getDashboardMetrics();
+  const chart = getDashboardChartData();
+  const recentActivity = getDashboardActivityItems();
+  const dashboardTasks = getDashboardUpcomingTasks();
+  const maxLead = Math.max(0, ...chart.map((item) => item.leads));
+  const maxDeal = Math.max(0, ...chart.map((item) => item.deals));
+  const hasChartData = chart.some((item) => item.leads || item.deals);
 
   return html`
     <div class="page-grid dashboard-grid">
       <section class="kpi-row">
-        ${data.metrics
+        ${metrics
           .map(
             (metric) => html`
               <article class="card kpi-card">
@@ -1657,7 +1873,9 @@ function renderDashboard() {
                 <strong
                   data-counter="${metric.value}"
                   data-prefix="${metric.prefix || ""}"
-                  >0</strong
+                  >${metric.prefix
+                    ? escapeHtml(currency(metric.value))
+                    : escapeHtml(number(metric.value))}</strong
                 >
                 <small class="${metric.tone}">${metric.change}</small>
               </article>
@@ -1671,91 +1889,148 @@ function renderDashboard() {
             <p class="eyebrow">Momentum</p>
             <h2>Weekly performance</h2>
           </div>
-          <span class="pill">Live demo</span>
+          <span class="pill">Supabase live</span>
         </div>
-        <div class="bar-chart" aria-label="Weekly leads and deals chart">
-          ${data.chart
-            .map(
-              (item) => html`
-                <div class="bar-group">
-                  <div class="bars">
-                    <span
-                      style="height:${(item.leads / maxLead) * 100}%"
-                    ></span>
-                    <span
-                      style="height:${(item.deals / maxDeal) * 100}%"
-                    ></span>
-                  </div>
-                  <small>${item.label}</small>
-                </div>
-              `,
-            )
-            .join("")}
-        </div>
+        ${hasChartData
+          ? html`
+              <div class="bar-chart" aria-label="Weekly leads and deals chart">
+                ${chart
+                  .map(
+                    (item) => html`
+                      <div class="bar-group">
+                        <div class="bars">
+                          <span
+                            style="height:${maxLead ? (item.leads / maxLead) * 100 : 0}%; opacity:${item.leads ? 1 : 0.16}"
+                          ></span>
+                          <span
+                            style="height:${maxDeal ? (item.deals / maxDeal) * 100 : 0}%; opacity:${item.deals ? 1 : 0.16}"
+                          ></span>
+                        </div>
+                        <small>${item.label}</small>
+                      </div>
+                    `,
+                  )
+                  .join("")}
+              </div>
+              <p class="helper-text chart-helper">
+                Black bars show leads created this week. Gold bars show deals
+                created this week.
+              </p>
+            `
+          : `<p class="helper-text">No leads or deals have been created yet this week.</p>`}
       </section>
       <section class="card activity-card">
         <div class="section-head"><h2>Recent activity</h2></div>
-        ${data.activity
-          .map(
-            (item) => html`
-              <div class="activity-row">
-                <span></span>
-                <p><strong>${item.actor}</strong> ${item.action}</p>
-                <small>${item.time}</small>
-              </div>
-            `,
-          )
-          .join("")}
+        ${recentActivity.length
+          ? recentActivity
+              .map(
+                (item) => html`
+                  <div class="activity-row">
+                    <span></span>
+                    <p>${escapeHtml(item.text)}</p>
+                    <small>${escapeHtml(item.time)}</small>
+                  </div>
+                `,
+              )
+              .join("")
+          : '<p class="helper-text">No recent activity yet. New contacts, leads, deals, and tasks will appear here.</p>'}
       </section>
       <section class="card tasks-card">
         <div class="section-head">
           <h2>Upcoming tasks</h2>
           <button class="text-button" data-route="tasks">View all</button>
         </div>
-        ${!state.tasksLoaded && state.tasksLoading
-          ? Array.from({ length: 4 })
-              .map(
-                () => '<div class="dashboard-task-row task-loading-row"></div>',
-              )
-              .join("")
-          : dashboardTasks.length
-            ? dashboardTasks
-                .map((task) => {
-                  const isBusy =
-                    String(state.taskStatusBusyId) === String(task.id);
+        ${dashboardTasks.length
+          ? dashboardTasks
+              .map((task) => {
+                const isBusy = String(state.taskStatusBusyId) === String(task.id);
 
-                  return html`
-                    <label
-                      class="dashboard-task-row"
-                      for="dashboard-task-${escapeHtml(task.id)}"
-                    >
-                      <input
-                        id="dashboard-task-${escapeHtml(task.id)}"
-                        data-dashboard-task-toggle-id="${escapeHtml(task.id)}"
-                        type="checkbox"
-                        ${isBusy ? "disabled" : ""}
-                        aria-label="${escapeHtml(getTaskTitle(task))}"
-                      />
-                      <div>
-                        <strong>${escapeHtml(getTaskTitle(task))}</strong>
-                        <span
-                          >${escapeHtml(getTaskTypeValue(task))} -
-                          ${escapeHtml(getTaskDueDateLabel(task))}</span
-                        >
-                      </div>
+                return html`
+                  <label
+                    class="dashboard-task-row"
+                    for="dashboard-task-${escapeHtml(task.id)}"
+                  >
+                    <input
+                      id="dashboard-task-${escapeHtml(task.id)}"
+                      data-dashboard-task-toggle-id="${escapeHtml(task.id)}"
+                      type="checkbox"
+                      ${isBusy ? "disabled" : ""}
+                      aria-label="${escapeHtml(getTaskTitle(task))}"
+                    />
+                    <div>
+                      <strong>${escapeHtml(getTaskTitle(task))}</strong>
                       <span
-                        class="badge ${statusClass(getTaskPriorityValue(task))}"
-                        >${escapeHtml(getTaskPriorityValue(task))}</span
+                        >${escapeHtml(getTaskTypeValue(task))} -
+                        ${escapeHtml(getTaskDueDateLabel(task))}</span
                       >
-                    </label>
-                  `;
-                })
-                .join("")
-            : `<p class="helper-text">${escapeHtml(
-                state.tasksError && !state.tasksLoaded
-                  ? state.tasksError
-                  : "No active tasks yet. Create the first task to start the follow-up queue.",
-              )}</p>`}
+                    </div>
+                    <span class="badge ${statusClass(getTaskPriorityValue(task))}"
+                      >${escapeHtml(getTaskPriorityValue(task))}</span
+                    >
+                  </label>
+                `;
+              })
+              .join("")
+          : '<p class="helper-text">No open tasks are waiting right now. New follow-ups will show here as soon as they are created.</p>'}
+      </section>
+    </div>
+  `;
+}
+
+function renderDashboardStateCard({
+  eyebrow,
+  title,
+  body,
+  actionLabel = "",
+}) {
+  return html`
+    <section class="card dashboard-state-card">
+      <p class="eyebrow">${escapeHtml(eyebrow)}</p>
+      <h2>${escapeHtml(title)}</h2>
+      <p>${escapeHtml(body)}</p>
+      ${actionLabel
+        ? `<button class="button secondary" type="button" data-dashboard-reload>${escapeHtml(actionLabel)}</button>`
+        : ""}
+    </section>
+  `;
+}
+
+function renderDashboardLoadingView() {
+  return html`
+    <div class="page-grid dashboard-grid dashboard-loading-view" aria-busy="true">
+      <section class="kpi-row">
+        ${Array.from({ length: 4 })
+          .map(
+            () => html`
+              <article class="card kpi-card dashboard-loading-card">
+                <div class="dashboard-loading-copy short"></div>
+                <div class="dashboard-loading-copy tall"></div>
+                <div class="dashboard-loading-copy medium"></div>
+              </article>
+            `,
+          )
+          .join("")}
+      </section>
+      <section class="card chart-card dashboard-loading-card">
+        <div class="section-head">
+          <div>
+            <div class="dashboard-loading-copy short"></div>
+            <div class="dashboard-loading-copy medium"></div>
+          </div>
+        </div>
+        <div class="dashboard-loading-chart"></div>
+      </section>
+      <section class="card activity-card dashboard-loading-card">
+        <div class="dashboard-loading-copy medium"></div>
+        ${Array.from({ length: 5 })
+          .map(() => '<div class="task-loading-row"></div>')
+          .join("")}
+      </section>
+      <section class="card tasks-card dashboard-loading-card">
+        <div class="dashboard-loading-copy medium"></div>
+        ${Array.from({ length: 5 })
+          .map(() => '<div class="task-loading-row"></div>')
+          .join("")}
       </section>
     </div>
   `;
@@ -4770,7 +5045,7 @@ function hydrateRouteData(route) {
   if (!isAuthenticated()) return;
 
   if (route === "dashboard") {
-    void loadTasks();
+    void loadDashboardData();
   }
 
   if (route === "contacts") {
@@ -4801,6 +5076,49 @@ function hydrateRouteData(route) {
 
   if (route === "settings") {
     void loadOrganizationSettings();
+  }
+}
+
+async function loadDashboardData(options = {}) {
+  const { force = false } = options;
+
+  if (!supabase || !state.session?.user) return;
+  if (state.dashboardLoading) return;
+  if (areDashboardSourcesLoaded() && !force) return;
+
+  state.dashboardLoading = true;
+  state.dashboardError = "";
+  render();
+
+  try {
+    const profile = await ensureCurrentProfile();
+    const organizationId = profile.organization_id;
+    const [contacts, leads, deals, tasks] = await Promise.all([
+      listContactsByOrganization(organizationId),
+      listLeadsByOrganization(organizationId),
+      listDealsByOrganization(organizationId),
+      listTasksByOrganization(organizationId),
+    ]);
+
+    state.organizationId = organizationId;
+    state.contacts = contacts;
+    state.contactsLoaded = true;
+    state.contactsError = "";
+    state.leads = leads;
+    state.leadsLoaded = true;
+    state.leadsError = "";
+    state.deals = deals;
+    state.dealsLoaded = true;
+    state.dealsError = "";
+    state.tasks = tasks;
+    state.tasksLoaded = true;
+    state.tasksError = "";
+  } catch (error) {
+    state.dashboardError =
+      error.message || "Unable to load your dashboard right now.";
+  } finally {
+    state.dashboardLoading = false;
+    render();
   }
 }
 
@@ -5921,6 +6239,11 @@ function bindEvents() {
   document.querySelectorAll("[data-settings-reload]").forEach((button) => {
     button.addEventListener("click", () => {
       void loadOrganizationSettings({ force: true });
+    });
+  });
+  document.querySelectorAll("[data-dashboard-reload]").forEach((button) => {
+    button.addEventListener("click", () => {
+      void loadDashboardData({ force: true });
     });
   });
   document.querySelectorAll("[data-settings-field]").forEach((field) => {
