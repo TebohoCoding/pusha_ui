@@ -56,6 +56,22 @@ If your Supabase project still uses the older anon key naming, the app also acce
 VITE_SUPABASE_ANON_KEY=...
 ```
 
+## Runtime Config Fallback
+
+For static hosting environments where a local `.env` file is not available at build time, the app also loads
+`/runtime-config.js` before booting.
+
+That file can set:
+
+```js
+globalThis.__PUSHA_ENV__ = {
+  VITE_SUPABASE_URL: "...",
+  VITE_SUPABASE_PUBLISHABLE_KEY: "...",
+};
+```
+
+Build-time `VITE_` variables still work, but `runtime-config.js` gives you a production fallback when the host does not inject them into the Vite build.
+
 ## Supabase Auth Setup
 
 1. Copy `.env.example` to `.env`.
